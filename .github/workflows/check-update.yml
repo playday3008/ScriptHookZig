@@ -1,0 +1,248 @@
+name: Check for ScriptHookV/ScriptHookRDR2 Update
+
+on:
+  schedule:
+    # This workflow is triggered every Friday at 08:00 UTC
+    - cron: '0 8 * * 5'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: check-update
+  cancel-in-progress: true
+
+jobs:
+  check-update-gta5:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+
+      - name: Download ScriptHookV download page
+        run: |
+          REFERER_LINK="https://www.dev-c.com/gtav/scripthookv/"
+          curl -o download_page.html "$REFERER_LINK"
+          echo "REFERER_LINK=$REFERER_LINK" >> $GITHUB_ENV
+
+      - name: Extract ScriptHookV download link
+        id: extract_link
+        run: |
+          DOWNLOAD_LINK=$(grep -i -oP '<a href="(.+?)" target="_blank">Download</a>' download_page.html | grep -oP 'https.+zip')
+          echo "DOWNLOAD_LINK=$DOWNLOAD_LINK" >> $GITHUB_ENV
+
+      - name: Download ScriptHookV
+        run: |
+            if [ -z "$DOWNLOAD_LINK" ]; then
+              echo "No download link found."
+              exit 1
+            fi
+            curl -L --referer "$REFERER_LINK" -o ScriptHookV.zip "$DOWNLOAD_LINK"
+
+      - name: Extract ScriptHookV
+        run: |
+          if [ ! -f ScriptHookV.zip ]; then
+            echo "ScriptHookV.zip not found."
+            exit 1
+          fi
+          unzip -o ScriptHookV.zip -d ScriptHookV
+
+      - name: Find ScriptHookV.dll
+        id: find_dll
+        run: |
+          DLL_PATH=$(find ScriptHookV -name "ScriptHookV.dll" | head -n 1)
+          if [ -z "$DLL_PATH" ]; then
+            echo "ScriptHookV.dll not found."
+            exit 1
+          fi
+          echo "DLL_PATH=$DLL_PATH" >> $GITHUB_ENV
+
+      - name: Extract Legacy versions from ScriptHookV.dll
+        id: extract_version
+        run: |
+          LEGACY_VERSIONS=$(strings -d "$DLL_PATH" | grep -oP '(VER_1_0.+)')
+          if [ -z "$LEGACY_VERSIONS" ]; then
+            echo "Version not found in ScriptHookV.dll."
+            exit 1
+          fi
+          {
+            echo 'LEGACY_VERSIONS<<EOF'
+            echo $LEGACY_VERSIONS
+            echo EOF
+          } >> $GITHUB_ENV
+          echo "Legacy versions found in ScriptHookV.dll:"
+          echo "$LEGACY_VERSIONS"
+
+      - name: Extract Enhanced versions from ScriptHookV.dll
+        id: extract_enhanced_version
+        run: |
+          ENHANCED_VERSIONS=$(strings -d "$DLL_PATH" | grep -oP '(VER_EN_1_0.+)')
+          if [ -z "$ENHANCED_VERSIONS" ]; then
+            echo "Enhanced version not found in ScriptHookV.dll."
+            exit 1
+          fi
+          {
+            echo 'ENHANCED_VERSIONS<<EOF'
+            echo $ENHANCED_VERSIONS
+            echo EOF
+          } >> $GITHUB_ENV
+          echo "Enhanced version found in ScriptHookV.dll:"
+          echo "$ENHANCED_VERSIONS"
+
+      - name: Cleanup downloaded files
+        run: |
+          rm -f download_page.html ScriptHookV.zip
+          rm -rf ScriptHookV
+
+      - name: Update `version.zig` file
+        run: |
+          VERSION_FILE=$(find . -wholename "*gta5/version.zig" | head -n 1)
+          if [ -z "$VERSION_FILE" ]; then
+            echo "version.zig file not found."
+            exit 1
+          fi
+          echo "//! Supported by ScriptHookV game versions" > "$VERSION_FILE"
+          echo "// Keep in sync with: .github/workflows/check-update.yml" >> "$VERSION_FILE"
+          echo "" >> "$VERSION_FILE"
+          echo "pub const GameVersion = enum(c_int) {" >> "$VERSION_FILE"
+          for VERSION in $(echo $LEGACY_VERSIONS | tr ' ' '\n'); do
+            echo "    $VERSION," >> "$VERSION_FILE"
+          done
+          echo "" >> "$VERSION_FILE"
+          for VERSION in $(echo $ENHANCED_VERSIONS | tr ' ' '\n'); do
+            if [ "$VERSION" = "$(echo $ENHANCED_VERSIONS | tr ' ' '\n' | head -n 1)" ]; then
+              echo "    $VERSION = 1001," >> "$VERSION_FILE"
+            else
+              echo "    $VERSION," >> "$VERSION_FILE"
+            fi
+          done
+          echo "" >> "$VERSION_FILE"
+          echo "    VER_UNKNOWN = -1," >> "$VERSION_FILE"
+          echo "    _," >> "$VERSION_FILE"
+          echo "};" >> "$VERSION_FILE"
+          echo "" >> "$VERSION_FILE"
+          echo "test GameVersion {" >> "$VERSION_FILE"
+          echo "    _ = GameVersion;" >> "$VERSION_FILE"
+          echo "}" >> "$VERSION_FILE"
+          zig fmt "$VERSION_FILE"
+          echo "VERSION_FILE=$VERSION_FILE" >> $GITHUB_ENV
+
+      - name: Create Pull Request if changes detected
+        uses: peter-evans/create-pull-request@v7
+        with:
+          title: "Update ScriptHookV versions"
+          body: "This PR updates the ScriptHookV versions in `version.zig`."
+          branch: "update-scripthookv-versions"
+          commit-message: "Update ScriptHookV versions in version.zig"
+          delete-branch: true
+          signoff: true
+          sign-commits: true
+
+  check-update-rdr2:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+
+      - name: Download ScriptHookRDR2 download page
+        run: |
+          REFERER_LINK="http://www.dev-c.com/rdr2/scripthookrdr2/"
+          curl -o download_page.html "$REFERER_LINK"
+          echo "REFERER_LINK=$REFERER_LINK" >> $GITHUB_ENV
+
+      - name: Extract ScriptHookRDR2 download link
+        id: extract_link
+        run: |
+          DOWNLOAD_LINK="http://www.dev-c.com$(grep -i -oP '<a href="(.+?)" target="_blank">Download</a>' download_page.html | grep -oP '/.+zip')"
+          echo "DOWNLOAD_LINK=$DOWNLOAD_LINK" >> $GITHUB_ENV
+
+      - name: Download ScriptHookRDR2
+        run: |
+            if [ -z "$DOWNLOAD_LINK" ]; then
+              echo "No download link found."
+              exit 1
+            fi
+            curl -L --referer "$REFERER_LINK" -o ScriptHookRDR2.zip "$DOWNLOAD_LINK"
+
+      - name: Extract ScriptHookRDR2
+        run: |
+          if [ ! -f ScriptHookRDR2.zip ]; then
+            echo "ScriptHookRDR2.zip not found."
+            exit 1
+          fi
+          unzip -o ScriptHookRDR2.zip -d ScriptHookRDR2
+
+      - name: Find ScriptHookRDR2.dll
+        id: find_dll
+        run: |
+          DLL_PATH=$(find ScriptHookRDR2 -name "ScriptHookRDR2.dll" | head -n 1)
+          if [ -z "$DLL_PATH" ]; then
+            echo "ScriptHookRDR2.dll not found."
+            exit 1
+          fi
+          echo "DLL_PATH=$DLL_PATH" >> $GITHUB_ENV
+
+      - name: Extract versions from ScriptHookRDR2.dll
+        id: extract_version
+        run: |
+          VERSIONS=$(strings -d "$DLL_PATH" | grep -oP '(VER_1_0.+)')
+          if [ -z "$VERSIONS" ]; then
+            echo "Version not found in ScriptHookRDR2.dll."
+            exit 1
+          fi
+          {
+            echo 'VERSIONS<<EOF'
+            echo $VERSIONS
+            echo EOF
+          } >> $GITHUB_ENV
+          echo "Versions found in ScriptHookRDR2.dll:"
+          echo "$VERSIONS"
+
+      - name: Cleanup downloaded files
+        run: |
+          rm -f download_page.html ScriptHookRDR2.zip
+          rm -rf ScriptHookRDR2
+
+      - name: Update `version.zig` file
+        run: |
+          VERSION_FILE=$(find . -wholename "*rdr2/version.zig" | head -n 1)
+          if [ -z "$VERSION_FILE" ]; then
+            echo "version.zig file not found."
+            exit 1
+          fi
+          echo "//! Supported by ScriptHookRDR2 game versions" > "$VERSION_FILE"
+          echo "// Keep in sync with: .github/workflows/check-update.yml" >> "$VERSION_FILE"
+          echo "" >> "$VERSION_FILE"
+          echo "pub const GameVersion = enum(c_int) {" >> "$VERSION_FILE"
+          echo "    VER_AUTO," >> "$VERSION_FILE"
+          echo "" >> "$VERSION_FILE"
+          for VERSION in $(echo $VERSIONS | tr ' ' '\n'); do
+            echo "    $VERSION," >> "$VERSION_FILE"
+          done
+          echo "" >> "$VERSION_FILE"
+          echo "    VER_UNKNOWN = -1," >> "$VERSION_FILE"
+          echo "    _," >> "$VERSION_FILE"
+          echo "};" >> "$VERSION_FILE"
+          echo "" >> "$VERSION_FILE"
+          echo "test GameVersion {" >> "$VERSION_FILE"
+          echo "    _ = GameVersion;" >> "$VERSION_FILE"
+          echo "}" >> "$VERSION_FILE"
+          zig fmt "$VERSION_FILE"
+          echo "VERSION_FILE=$VERSION_FILE" >> $GITHUB_ENV
+
+      - name: Create Pull Request if changes detected
+        uses: peter-evans/create-pull-request@v7
+        with:
+          title: "Update ScriptHookRDR2 versions"
+          body: "This PR updates the ScriptHookRDR2 versions in `version.zig`."
+          branch: "update-scripthookv-versions"
+          commit-message: "Update ScriptHookRDR2 versions in version.zig"
+          delete-branch: true
+          signoff: true
+          sign-commits: true
