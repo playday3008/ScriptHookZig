@@ -2,6 +2,10 @@
 
 Zig wrapper for ScriptHookV/ScriptHookRDR2.
 
+## Examples
+
+- [GTAV Beast Hunt Helper](https://github.com/playday3008/GTAV-Beast-Hunt-Helper)
+
 ## Requirements
 
 - Zig 0.14.0 or later
