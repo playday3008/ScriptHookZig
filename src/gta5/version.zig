@@ -100,12 +100,14 @@ pub const GameVersion = enum(c_int) {
     VER_1_0_3504_0,
     VER_1_0_3521_0,
     VER_1_0_3570_0,
+    VER_1_0_3586_0,
 
     VER_EN_1_0_811_8 = 1001,
     VER_EN_1_0_812_8,
     VER_EN_1_0_813_11,
     VER_EN_1_0_814_9,
     VER_EN_1_0_889_15,
+    VER_EN_1_0_889_19,
 
     VER_UNKNOWN = -1,
     _,
