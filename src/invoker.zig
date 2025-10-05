@@ -1,5 +1,7 @@
 //! ScriptHook Invoker
 
+const std = @import("std");
+
 const ScriptHook = @import("ScriptHook.zig");
 
 /// Pushes a value of type `T` onto the native argument stack.
@@ -33,11 +35,8 @@ pub inline fn invoke(
     if (args_type_info != .@"struct") {
         @compileError("expected tuple or struct argument, found " ++ @typeName(ArgsType));
     }
-    const fields_info = args_type_info.@"struct".fields;
-    if (fields_info.len > 25) {
-        @compileError("too many arguments, maximum is 25, found " ++ (fields_info.len));
-    }
 
+    const fields_info = args_type_info.@"struct".fields;
     inline for (fields_info) |field_info| {
         const field_name = field_info.name;
         const field = @field(args, field_name);
@@ -48,7 +47,6 @@ pub inline fn invoke(
 }
 
 test "invoker" {
-    const std = @import("std");
     const testing = std.testing;
 
     testing.refAllDeclsRecursive(@This());
