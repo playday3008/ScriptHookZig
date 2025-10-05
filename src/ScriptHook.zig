@@ -57,12 +57,12 @@ fn resolve(comptime T: type, comptime name: [:0]const u8) T {
     }
 
     if (resolved.get(name)) |func| {
-        return @constCast(@ptrCast(func));
+        return @ptrCast(@constCast(func));
     }
 
     var lib = dll.?;
     if (lib.lookup(T, name)) |func| {
-        resolved.put(name, @constCast(@ptrCast(func))) catch |err| {
+        resolved.put(name, @ptrCast(@constCast(func))) catch |err| {
             std.debug.panic("Failed to put function '{s}' in resolved map: {any}", .{ name, err });
         };
 
@@ -511,33 +511,9 @@ pub fn getGameVersionRDR2() GameVersionRDR2 {
 }
 
 test "ScriptHook" {
-    _ = createTexture;
-    _ = drawTexture;
-    _ = PresentCallback;
-    _ = presentCallbackRegister;
-    _ = presentCallbackUnregister;
-    _ = KeyboardHandler;
-    _ = keyboardHandlerRegister;
-    _ = keyboardHandlerUnregister;
-    _ = scriptWait;
-    _ = ScriptMainCallback;
-    _ = scriptRegister;
-    _ = scriptRegisterAdditionalThread;
-    _ = scriptUnregister;
-    _ = nativeInit;
-    _ = nativePush64;
-    _ = nativeCall;
-    _ = wait;
-    _ = terminate;
-    _ = getGlobalPtr;
-    _ = worldGetAllVehicles;
-    _ = worldGetAllPeds;
-    _ = worldGetAllObjects;
-    _ = worldGetAllPickups;
-    _ = getScriptHandleBaseAddress;
-    _ = getGameVersion;
-    _ = getGameVersionGTAV;
-    _ = getGameVersionRDR2;
+    const testing = std.testing;
+
+    testing.refAllDeclsRecursive(@This());
 }
 
 fn getModuleFileNameW(

@@ -86,35 +86,7 @@ fn validateSize(comptime T: type, comptime expected_size: u32) void {
 }
 
 test "Types" {
-    _ = Void;
-    _ = Any;
-    _ = uint;
-    _ = Hash;
+    const testing = std.testing;
 
-    _ = Blip;
-    _ = Cam;
-    _ = Camera;
-    _ = CarGenerator;
-    _ = ColourIndex;
-    _ = CoverPoint;
-    _ = Entity;
-    _ = FireId;
-    _ = Group;
-    _ = Interior;
-    _ = Object;
-    _ = Ped;
-    _ = Pickup;
-    _ = Player;
-    _ = ScrHandle;
-    _ = Sphere;
-    _ = TaskSequence;
-    _ = Texture;
-    _ = TextureDict;
-    _ = Train;
-    _ = Vehicle;
-    _ = Weapon;
-
-    _ = Vector2;
-    _ = Vector3;
-    _ = Vector4;
+    testing.refAllDeclsRecursive(@This());
 }

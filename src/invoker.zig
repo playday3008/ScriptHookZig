@@ -48,6 +48,8 @@ pub inline fn invoke(
 }
 
 test "invoker" {
-    _ = push;
-    _ = invoke;
+    const std = @import("std");
+    const testing = std.testing;
+
+    testing.refAllDeclsRecursive(@This());
 }

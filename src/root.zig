@@ -45,13 +45,11 @@
 pub const Types = @import("types.zig");
 pub const Invoker = @import("invoker.zig");
 pub const Joaat = @import("joaat.zig");
-pub const ScriptHook = @import("ScriptHook.zig");
-pub usingnamespace @import("ScriptHook.zig");
+pub const Hook = @import("ScriptHook.zig");
 
 test "root" {
-    _ = Types;
-    _ = Invoker;
-    _ = Joaat;
-    _ = ScriptHook;
-    _ = @This();
+    const std = @import("std");
+    const testing = std.testing;
+
+    testing.refAllDeclsRecursive(@This());
 }
