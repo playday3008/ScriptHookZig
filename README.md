@@ -8,7 +8,7 @@ Zig wrapper for ScriptHookV/ScriptHookRDR2.
 
 ## Requirements
 
-- Zig 0.14.0 or later
+- Zig 0.15.1 or later
 
 ## Usage
 
@@ -26,25 +26,29 @@ By editing your `build.zig` file, you can include the `ScriptHookZig` module as 
 Here is an example of how to do this:
 
 ```zig
-    /// build.zig
-    // ...
-    const lib = b.addLibrary(.{ ... }); // Your library configuration
+/// build.zig
+// ...
+// Add the ScriptHookZig dependency
+const script_hook_v = b.dependency(
+    "ScriptHookZig", // As defined in your build.zig.zon
+    .{
+        .target = target,
+        .optimize = optimize,
+    },
+);
 
-    // Add the ScriptHookZig dependency
-    const script_hook_v = b.dependency(
-        "ScriptHookZig", // As defined in your build.zig.zon
+const lib = b.addLibrary(.{// Your library configuration
+    // ...
+    .imports = &.{
+        // ...
+        // Add the import to your library
         .{
-            .target = target,
-            .optimize = optimize,
+            .name = "ScriptHookZig",
+            .module = script_hook_v.module("ScriptHookZig"),
         },
-    );
-
-    // Add the import to your library
-    lib.root_module.addImport(
-        "ScriptHookZig", // The name you want to use in your Zig code
-        script_hook_v.module("ScriptHookZig"), // As defined inside the module
-    );
-    // ...
+    },
+}); 
+// ...
 ```
 
 ### Usage in your Zig code
@@ -53,6 +57,7 @@ Importing:
 
 ```zig
 const ScriptHookZig = @import("ScriptHookZig");
+const Hook = ScriptHookZig.Hooks;
 ```
 
 Using:
@@ -125,32 +130,32 @@ _ = comptime ScriptHookZig.Joaat.atStringHash;
 <p>
 
 ```zig
-_ = ScriptHookZig.createTexture;             // GTA V only
-_ = ScriptHookZig.drawTexture;               // GTA V only
-_ = ScriptHookZig.PresentCallback;           // GTA V only
-_ = ScriptHookZig.presentCallbackRegister;   // GTA V only
-_ = ScriptHookZig.presentCallbackUnregister; // GTA V only
-_ = ScriptHookZig.KeyboardHandler;
-_ = ScriptHookZig.keyboardHandlerRegister;
-_ = ScriptHookZig.keyboardHandlerUnregister;
-_ = ScriptHookZig.scriptWait;
-_ = ScriptHookZig.scriptRegister;
-_ = ScriptHookZig.scriptRegisterAdditionalThread;
-_ = ScriptHookZig.scriptUnregister;
-_ = ScriptHookZig.nativeInit;
-_ = ScriptHookZig.nativePush64;
-_ = ScriptHookZig.nativeCall;
-_ = ScriptHookZig.wait;
-_ = ScriptHookZig.terminate;
-_ = ScriptHookZig.getGlobalPtr;
-_ = ScriptHookZig.worldGetAllVehicles;
-_ = ScriptHookZig.worldGetAllPeds;
-_ = ScriptHookZig.worldGetAllObjects;
-_ = ScriptHookZig.worldGetAllPickups;
-_ = ScriptHookZig.getScriptHandleBaseAddress;
-_ = ScriptHookZig.getGameVersion;
-_ = ScriptHookZig.getGameVersionGTAV;
-_ = ScriptHookZig.getGameVersionRDR2;
+_ = Hook.createTexture;             // GTA V only
+_ = Hook.drawTexture;               // GTA V only
+_ = Hook.PresentCallback;           // GTA V only
+_ = Hook.presentCallbackRegister;   // GTA V only
+_ = Hook.presentCallbackUnregister; // GTA V only
+_ = Hook.KeyboardHandler;
+_ = Hook.keyboardHandlerRegister;
+_ = Hook.keyboardHandlerUnregister;
+_ = Hook.scriptWait;
+_ = Hook.scriptRegister;
+_ = Hook.scriptRegisterAdditionalThread;
+_ = Hook.scriptUnregister;
+_ = Hook.nativeInit;
+_ = Hook.nativePush64;
+_ = Hook.nativeCall;
+_ = Hook.wait;
+_ = Hook.terminate;
+_ = Hook.getGlobalPtr;
+_ = Hook.worldGetAllVehicles;
+_ = Hook.worldGetAllPeds;
+_ = Hook.worldGetAllObjects;
+_ = Hook.worldGetAllPickups;
+_ = Hook.getScriptHandleBaseAddress;
+_ = Hook.getGameVersion;
+_ = Hook.getGameVersionGTAV;
+_ = Hook.getGameVersionRDR2;
 ```
 
 </p>
