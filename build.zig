@@ -34,7 +34,15 @@ pub fn build(b: *std.Build) void {
     // multiple modules and consumers will need to be able to specify which
     // module they want to access.
     const mod = b.addModule("ScriptHookZig", .{
+        // The root source file is the "entry point" of this module. Users of
+        // this module will only be able to access public declarations contained
+        // in this file, which means that if you have declarations that you
+        // intend to expose to consumers that were defined in other files part
+        // of this module, you will have to make sure to re-export them from
+        // the root file.
         .root_source_file = b.path("src/root.zig"),
+        // Later on we'll use this module as the root module of a test executable
+        // which requires us to specify a target.
         .target = target,
         .optimize = optimize,
         .pic = true,
@@ -62,12 +70,12 @@ pub fn build(b: *std.Build) void {
     // Creates an executable that will run `test` blocks from the provided module.
     // Here `mod` needs to define a target, which is why earlier we made sure to
     // set the releative field.
-    const lib_tests = b.addTest(.{
+    const mod_tests = b.addTest(.{
         .root_module = mod,
     });
 
     // A run step that will run the test executable.
-    const run_lib_tests = b.addRunArtifact(lib_tests);
+    const run_lib_tests = b.addRunArtifact(mod_tests);
 
     // A top level step for running all tests. dependOn can be called multiple
     // times and since the two run steps do not depend on one another, this will
