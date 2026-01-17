@@ -17,6 +17,9 @@ concurrency:
 jobs:
   check-update-gta5:
     runs-on: ubuntu-latest
+    env:
+      MAX_RETRIES: 3
+      RETRY_DELAY: 5
     steps:
       - uses: actions/checkout@v4
 
@@ -26,7 +29,19 @@ jobs:
       - name: Download ScriptHookV download page
         run: |
           REFERER_LINK="https://www.dev-c.com/gtav/scripthookv/"
-          curl -o download_page.html "$REFERER_LINK"
+          for i in $(seq 1 $MAX_RETRIES); do
+            echo "Attempt $i of $MAX_RETRIES..."
+            if curl -fsSL -o download_page.html "$REFERER_LINK"; then
+              echo "Download successful."
+              break
+            fi
+            if [ $i -eq $MAX_RETRIES ]; then
+              echo "Failed to download after $MAX_RETRIES attempts."
+              exit 1
+            fi
+            echo "Download failed. Retrying in $RETRY_DELAY seconds..."
+            sleep $RETRY_DELAY
+          done
           echo "REFERER_LINK=$REFERER_LINK" >> $GITHUB_ENV
 
       - name: Extract ScriptHookV download link
@@ -37,11 +52,23 @@ jobs:
 
       - name: Download ScriptHookV
         run: |
-            if [ -z "$DOWNLOAD_LINK" ]; then
-              echo "No download link found."
+          if [ -z "$DOWNLOAD_LINK" ]; then
+            echo "No download link found."
+            exit 1
+          fi
+          for i in $(seq 1 $MAX_RETRIES); do
+            echo "Attempt $i of $MAX_RETRIES..."
+            if curl -fsSL --referer "$REFERER_LINK" -o ScriptHookV.zip "$DOWNLOAD_LINK"; then
+              echo "Download successful."
+              break
+            fi
+            if [ $i -eq $MAX_RETRIES ]; then
+              echo "Failed to download after $MAX_RETRIES attempts."
               exit 1
             fi
-            curl -L --referer "$REFERER_LINK" -o ScriptHookV.zip "$DOWNLOAD_LINK"
+            echo "Download failed. Retrying in $RETRY_DELAY seconds..."
+            sleep $RETRY_DELAY
+          done
 
       - name: Extract ScriptHookV
         run: |
@@ -144,6 +171,9 @@ jobs:
 
   check-update-rdr2:
     runs-on: ubuntu-latest
+    env:
+      MAX_RETRIES: 3
+      RETRY_DELAY: 5
     steps:
       - uses: actions/checkout@v4
 
@@ -153,7 +183,19 @@ jobs:
       - name: Download ScriptHookRDR2 download page
         run: |
           REFERER_LINK="http://www.dev-c.com/rdr2/scripthookrdr2/"
-          curl -o download_page.html "$REFERER_LINK"
+          for i in $(seq 1 $MAX_RETRIES); do
+            echo "Attempt $i of $MAX_RETRIES..."
+            if curl -fsSL -o download_page.html "$REFERER_LINK"; then
+              echo "Download successful."
+              break
+            fi
+            if [ $i -eq $MAX_RETRIES ]; then
+              echo "Failed to download after $MAX_RETRIES attempts."
+              exit 1
+            fi
+            echo "Download failed. Retrying in $RETRY_DELAY seconds..."
+            sleep $RETRY_DELAY
+          done
           echo "REFERER_LINK=$REFERER_LINK" >> $GITHUB_ENV
 
       - name: Extract ScriptHookRDR2 download link
@@ -164,11 +206,23 @@ jobs:
 
       - name: Download ScriptHookRDR2
         run: |
-            if [ -z "$DOWNLOAD_LINK" ]; then
-              echo "No download link found."
+          if [ -z "$DOWNLOAD_LINK" ]; then
+            echo "No download link found."
+            exit 1
+          fi
+          for i in $(seq 1 $MAX_RETRIES); do
+            echo "Attempt $i of $MAX_RETRIES..."
+            if curl -fsSL --referer "$REFERER_LINK" -o ScriptHookRDR2.zip "$DOWNLOAD_LINK"; then
+              echo "Download successful."
+              break
+            fi
+            if [ $i -eq $MAX_RETRIES ]; then
+              echo "Failed to download after $MAX_RETRIES attempts."
               exit 1
             fi
-            curl -L --referer "$REFERER_LINK" -o ScriptHookRDR2.zip "$DOWNLOAD_LINK"
+            echo "Download failed. Retrying in $RETRY_DELAY seconds..."
+            sleep $RETRY_DELAY
+          done
 
       - name: Extract ScriptHookRDR2
         run: |
