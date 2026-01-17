@@ -1,12 +1,37 @@
 //! ScriptHook Zig bindings
+//!
+//! Bindings for ScriptHookV (GTA V) and ScriptHookRDR2 (Red Dead Redemption 2).
+//!
+//! All public functions that interact with the ScriptHook DLL return errors instead of panicking,
+//! allowing callers to handle failures gracefully.
+//!
+//! ## Thread Safety
+//!
+//! These bindings follow ScriptHook's threading model:
+//! - Initialization is thread-safe (uses `std.once`)
+//! - After initialization, functions should be called from the script thread only
+//!   (this matches ScriptHook's requirement that natives be called from the script thread)
 
 const std = @import("std");
 const windows = std.os.windows;
 
 const Types = @import("types.zig");
 
-var dll: ?std.DynLib = null;
-var resolved: std.StringHashMap(windows.FARPROC) = .init(std.heap.page_allocator);
+/// Errors that can occur during ScriptHook operations.
+pub const Error = error{
+    /// Failed to retrieve the module file name from the system.
+    GetModuleFileNameFailed,
+    /// Failed to convert a short path to a long path.
+    GetLongPathNameFailed,
+    /// The game executable is not recognized (must be GTA5, GTA5_Enhanced, or RDR2).
+    UnsupportedGame,
+    /// Failed to load the ScriptHook DLL (ScriptHookV.dll or ScriptHookRDR2.dll).
+    DllLoadFailed,
+    /// Failed to resolve a function from the ScriptHook DLL.
+    FunctionResolutionFailed,
+    /// Memory allocation failed.
+    OutOfMemory,
+};
 
 const Game = enum {
     GTAV,
@@ -20,63 +45,78 @@ inline fn getLibraryName(kind: Game) [:0]const u8 {
     };
 }
 
-var game: Game = undefined;
+/// Internal state for ScriptHook bindings.
+/// Initialization is thread-safe via `std.once`.
+/// Post-initialization access assumes single-threaded usage (script thread).
+const State = struct {
+    dll: ?std.DynLib = null,
+    resolved: std.StringHashMap(windows.FARPROC) = .init(std.heap.page_allocator),
+    game: ?Game = null,
+    init_error: ?Error = null,
+};
 
-fn init() void {
+var state: State = .{};
+
+fn doInit() void {
     const allocator = std.heap.page_allocator;
 
-    const module_filename = getModulePathZ(allocator, null) catch |err| {
-        std.debug.panic("Failed to get current executable file name: {any}", .{err});
+    const module_filename = getModulePathZ(allocator, null) catch {
+        state.init_error = Error.GetModuleFileNameFailed;
+        return;
     };
     defer allocator.free(module_filename);
 
     const module_name = std.fs.path.stem(module_filename);
 
-    game = blk: {
-        if (std.mem.eql(u8, module_name, "GTA5") or
-            std.mem.eql(u8, module_name, "GTA5_Enhanced"))
-        {
-            break :blk Game.GTAV;
-        } else if (std.mem.eql(u8, module_name, "RDR2")) {
-            break :blk Game.RDR2;
-        } else {
-            std.debug.panic("Unsupported game module name: {s}", .{module_name});
-        }
-    };
+    if (std.mem.eql(u8, module_name, "GTA5") or
+        std.mem.eql(u8, module_name, "GTA5_Enhanced"))
+    {
+        state.game = .GTAV;
+    } else if (std.mem.eql(u8, module_name, "RDR2")) {
+        state.game = .RDR2;
+    } else {
+        state.init_error = Error.UnsupportedGame;
+    }
 }
 
-var init_once = std.once(init);
+var init_once = std.once(doInit);
 
-fn resolve(comptime T: type, comptime name: [:0]const u8) T {
+fn ensureInitialized() Error!void {
     init_once.call();
-    if (dll == null) {
-        const lib = getLibraryName(game);
-        dll = std.DynLib.open(lib) catch |err| {
-            std.debug.panic("Failed to open {s}: {any}", .{ lib, err });
+    if (state.init_error) |err| return err;
+}
+
+fn resolve(comptime T: type, comptime name: [:0]const u8) Error!T {
+    try ensureInitialized();
+
+    if (state.dll == null) {
+        const lib = getLibraryName(state.game.?);
+        state.dll = std.DynLib.open(lib) catch {
+            return Error.DllLoadFailed;
         };
     }
 
-    if (resolved.get(name)) |func| {
+    if (state.resolved.get(name)) |func| {
         return @ptrCast(@constCast(func));
     }
 
-    var lib = dll.?;
+    var lib = state.dll.?;
     if (lib.lookup(T, name)) |func| {
-        resolved.put(name, @ptrCast(@constCast(func))) catch |err| {
-            std.debug.panic("Failed to put function '{s}' in resolved map: {any}", .{ name, err });
+        state.resolved.put(name, @ptrCast(@constCast(func))) catch {
+            return Error.OutOfMemory;
         };
 
         return func;
     }
 
-    std.debug.panic("Failed to resolve function '{s}' in {s}", .{ name, getLibraryName(game) });
+    return Error.FunctionResolutionFailed;
 }
 
 // Texture
 
 /// Creates a texture.
 ///
-/// Returns internal texture ID.
+/// Returns internal texture ID, or an error if the function could not be resolved.
 ///
 /// Texture deletion is performed automatically when game reloads scripts.\
 /// Can be called only in the same thread as natives.
@@ -85,9 +125,9 @@ fn resolve(comptime T: type, comptime name: [:0]const u8) T {
 pub fn createTexture(
     /// Full path to location of the texture file.
     filepath: [*:0]const u8,
-) callconv(.c) c_int {
-    const func = resolve(
-        *const @TypeOf(createTexture),
+) Error!c_int {
+    const func = try resolve(
+        *const fn ([*:0]const u8) callconv(.c) c_int,
         "?createTexture@@YAHPEBD@Z",
     );
 
@@ -136,9 +176,9 @@ pub fn drawTexture(
     b: f32,
     /// Alpha value.
     a: f32,
-) callconv(.c) void {
-    const func = resolve(
-        *const @TypeOf(drawTexture),
+) Error!void {
+    const func = try resolve(
+        *const fn (c_int, c_int, c_int, c_int, f32, f32, f32, f32, f32, f32, f32, f32, f32, f32, f32, f32) callconv(.c) void,
         "?drawTexture@@YAXHHHHMMMMMMMMMMMM@Z",
     );
 
@@ -181,9 +221,9 @@ pub const PresentCallback = ?*const fn (swap_chain: ?*anyopaque) callconv(.c) vo
 pub fn presentCallbackRegister(
     /// Callback function pointer of type `PresentCallback`.
     callback: PresentCallback,
-) callconv(.c) void {
-    const func = resolve(
-        *const @TypeOf(presentCallbackRegister),
+) Error!void {
+    const func = try resolve(
+        *const fn (PresentCallback) callconv(.c) void,
         "?presentCallbackRegister@@YAXP6AXPEAX@Z@Z",
     );
 
@@ -197,9 +237,9 @@ pub fn presentCallbackRegister(
 pub fn presentCallbackUnregister(
     /// Callback function pointer of type `PresentCallback`.
     callback: PresentCallback,
-) callconv(.c) void {
-    const func = resolve(
-        *const @TypeOf(presentCallbackUnregister),
+) Error!void {
+    const func = try resolve(
+        *const fn (PresentCallback) callconv(.c) void,
         "?presentCallbackUnregister@@YAXP6AXPEAX@Z@Z",
     );
 
@@ -208,7 +248,7 @@ pub fn presentCallbackUnregister(
 
 // Keyboard
 
-/// Keybord handler callback function type.
+/// Keyboard handler callback function type.
 pub const KeyboardHandler = ?*const fn (
     /// [MSDN: Virtual-Key Codes](https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes)
     key: windows.DWORD,
@@ -231,9 +271,9 @@ pub const KeyboardHandler = ?*const fn (
 pub fn keyboardHandlerRegister(
     /// Callback function pointer of type `KeyboardHandler`.
     handler: KeyboardHandler,
-) callconv(.c) void {
-    const func = resolve(
-        *const @TypeOf(keyboardHandlerRegister),
+) Error!void {
+    const func = try resolve(
+        *const fn (KeyboardHandler) callconv(.c) void,
         "?keyboardHandlerRegister@@YAXP6AXKGEHHHH@Z@Z",
     );
 
@@ -245,9 +285,9 @@ pub fn keyboardHandlerRegister(
 pub fn keyboardHandlerUnregister(
     /// Callback function pointer of type `KeyboardHandler`.
     handler: KeyboardHandler,
-) callconv(.c) void {
-    const func = resolve(
-        *const @TypeOf(keyboardHandlerUnregister),
+) Error!void {
+    const func = try resolve(
+        *const fn (KeyboardHandler) callconv(.c) void,
         "?keyboardHandlerUnregister@@YAXP6AXKGEHHHH@Z@Z",
     );
 
@@ -256,13 +296,13 @@ pub fn keyboardHandlerUnregister(
 
 // Scripts
 
-/// Stops the current script execution for a specified amount of time.\
+/// Stops the current script execution for a specified amount of time.
 pub fn scriptWait(
     /// The time in milliseconds to wait.
     time: windows.DWORD,
-) callconv(.c) void {
-    const func = resolve(
-        *const @TypeOf(scriptWait),
+) Error!void {
+    const func = try resolve(
+        *const fn (windows.DWORD) callconv(.c) void,
         "?scriptWait@@YAXK@Z",
     );
 
@@ -280,9 +320,9 @@ pub fn scriptRegister(
     module: windows.HMODULE,
     /// Pointer to the main script function, which is called when the script is started.
     script_main: ScriptMainCallback,
-) callconv(.c) void {
-    const func = resolve(
-        *const @TypeOf(scriptRegister),
+) Error!void {
+    const func = try resolve(
+        *const fn (windows.HMODULE, ScriptMainCallback) callconv(.c) void,
         "?scriptRegister@@YAXPEAUHINSTANCE__@@P6AXXZ@Z",
     );
 
@@ -296,9 +336,9 @@ pub fn scriptRegisterAdditionalThread(
     module: windows.HMODULE,
     /// Pointer to the main script function, which is called when the script is started.
     script_main: ScriptMainCallback,
-) callconv(.c) void {
-    const func = resolve(
-        *const @TypeOf(scriptRegisterAdditionalThread),
+) Error!void {
+    const func = try resolve(
+        *const fn (windows.HMODULE, ScriptMainCallback) callconv(.c) void,
         "?scriptRegisterAdditionalThread@@YAXPEAUHINSTANCE__@@P6AXXZ@Z",
     );
 
@@ -309,9 +349,9 @@ pub fn scriptRegisterAdditionalThread(
 /// Should be called on DLL detach.
 pub fn scriptUnregister(
     module: windows.HMODULE,
-) callconv(.c) void {
-    const func = resolve(
-        *const @TypeOf(scriptUnregister),
+) Error!void {
+    const func = try resolve(
+        *const fn (windows.HMODULE) callconv(.c) void,
         "?scriptUnregister@@YAXPEAUHINSTANCE__@@@Z",
     );
 
@@ -322,9 +362,9 @@ pub fn scriptUnregister(
 pub fn nativeInit(
     /// The function hash to call.
     hash: u64,
-) callconv(.c) void {
-    const func = resolve(
-        *const @TypeOf(nativeInit),
+) Error!void {
+    const func = try resolve(
+        *const fn (u64) callconv(.c) void,
         "?nativeInit@@YAX_K@Z",
     );
 
@@ -335,9 +375,9 @@ pub fn nativeInit(
 pub fn nativePush64(
     /// The argument value.
     val: u64,
-) callconv(.c) void {
-    const func = resolve(
-        *const @TypeOf(nativePush64),
+) Error!void {
+    const func = try resolve(
+        *const fn (u64) callconv(.c) void,
         "?nativePush64@@YAX_K@Z",
     );
 
@@ -347,9 +387,9 @@ pub fn nativePush64(
 /// Executes the script function call.
 ///
 /// Returns a pointer to the return value of the call.
-pub fn nativeCall() callconv(.c) *u64 {
-    const func = resolve(
-        *const @TypeOf(nativeCall),
+pub fn nativeCall() Error!*u64 {
+    const func = try resolve(
+        *const fn () callconv(.c) *u64,
         "?nativeCall@@YAPEA_KXZ",
     );
 
@@ -360,13 +400,13 @@ pub fn nativeCall() callconv(.c) *u64 {
 pub fn wait(
     /// The time in milliseconds to wait.
     time: windows.DWORD,
-) callconv(.c) void {
-    scriptWait(time);
+) Error!void {
+    try scriptWait(time);
 }
 
 /// Alias for `scriptWait(0xFFFFFFFF)` function, which effectively waits indefinitely.
-pub fn terminate() callconv(.c) void {
-    wait(0xFFFFFFFF);
+pub fn terminate() Error!void {
+    try wait(0xFFFFFFFF);
 }
 
 /// Returns pointer to a global variable.\
@@ -374,9 +414,9 @@ pub fn terminate() callconv(.c) void {
 pub fn getGlobalPtr(
     /// The variable ID to query.
     global_id: c_int,
-) callconv(.c) ?*u64 {
-    const func = resolve(
-        *const @TypeOf(getGlobalPtr),
+) Error!?*u64 {
+    const func = try resolve(
+        *const fn (c_int) callconv(.c) ?*u64,
         "?getGlobalPtr@@YAPEA_KH@Z",
     );
 
@@ -395,9 +435,9 @@ pub fn worldGetAllVehicles(
     arr: [*]Types.Vehicle,
     /// Size of the array.
     arr_size: c_int,
-) callconv(.c) c_int {
-    const func = resolve(
-        *const @TypeOf(worldGetAllVehicles),
+) Error!c_int {
+    const func = try resolve(
+        *const fn ([*]Types.Vehicle, c_int) callconv(.c) c_int,
         "?worldGetAllVehicles@@YAHPEAHH@Z",
     );
 
@@ -414,9 +454,9 @@ pub fn worldGetAllPeds(
     arr: [*]Types.Ped,
     /// Size of the array.
     arr_size: c_int,
-) callconv(.c) c_int {
-    const func = resolve(
-        *const @TypeOf(worldGetAllPeds),
+) Error!c_int {
+    const func = try resolve(
+        *const fn ([*]Types.Ped, c_int) callconv(.c) c_int,
         "?worldGetAllPeds@@YAHPEAHH@Z",
     );
 
@@ -433,9 +473,9 @@ pub fn worldGetAllObjects(
     arr: [*]Types.Object,
     /// Size of the array.
     arr_size: c_int,
-) callconv(.c) c_int {
-    const func = resolve(
-        *const @TypeOf(worldGetAllObjects),
+) Error!c_int {
+    const func = try resolve(
+        *const fn ([*]Types.Object, c_int) callconv(.c) c_int,
         "?worldGetAllObjects@@YAHPEAHH@Z",
     );
 
@@ -452,9 +492,9 @@ pub fn worldGetAllPickups(
     arr: [*]Types.Pickup,
     /// Size of the array.
     arr_size: c_int,
-) callconv(.c) c_int {
-    const func = resolve(
-        *const @TypeOf(worldGetAllPickups),
+) Error!c_int {
+    const func = try resolve(
+        *const fn ([*]Types.Pickup, c_int) callconv(.c) c_int,
         "?worldGetAllPickups@@YAHPEAHH@Z",
     );
 
@@ -469,9 +509,9 @@ pub fn worldGetAllPickups(
 pub fn getScriptHandleBaseAddress(
     /// The script handle to query.
     handle: c_int,
-) callconv(.c) [*c]windows.BYTE {
-    const func = resolve(
-        *const @TypeOf(getScriptHandleBaseAddress),
+) Error![*c]windows.BYTE {
+    const func = try resolve(
+        *const fn (c_int) callconv(.c) [*c]windows.BYTE,
         "?getScriptHandleBaseAddress@@YAPEAEH@Z",
     );
 
@@ -482,9 +522,9 @@ pub fn getScriptHandleBaseAddress(
 ///
 /// Returns an integer value that corresponds to the game version.
 /// Cast to the appropriate game version enumeration type for GTAV or RDR2.
-pub fn getGameVersion() callconv(.c) c_int {
-    const func = resolve(
-        *const @TypeOf(getGameVersion),
+pub fn getGameVersion() Error!c_int {
+    const func = try resolve(
+        *const fn () callconv(.c) c_int,
         "?getGameVersion@@YA?AW4eGameVersion@@XZ",
     );
 
@@ -494,20 +534,38 @@ pub fn getGameVersion() callconv(.c) c_int {
 pub const GameVersionGTAV = @import("gta5/version.zig").GameVersion;
 pub const GameVersionRDR2 = @import("rdr2/version.zig").GameVersion;
 
+/// Error returned when game version check fails.
+pub const GameVersionError = error{
+    /// The current game is not GTA V.
+    NotGTAV,
+    /// The current game is not RDR2.
+    NotRDR2,
+};
+
 /// Gets the game version enumeration value as specified by ScriptHookV.
 ///
-/// Asserts that the game is GTAV before returning the value.
-pub fn getGameVersionGTAV() GameVersionGTAV {
-    std.debug.assert(game == .GTAV);
-    return @enumFromInt(getGameVersion());
+/// Returns an error if the game is not GTA V.
+pub fn getGameVersionGTAV() (Error || GameVersionError)!GameVersionGTAV {
+    try ensureInitialized();
+
+    if (state.game != .GTAV) {
+        return GameVersionError.NotGTAV;
+    }
+
+    return @enumFromInt(try getGameVersion());
 }
 
 /// Gets the game version enumeration value as specified by ScriptHookRDR2.
 ///
-/// Asserts that the game is RDR2 before returning the value.
-pub fn getGameVersionRDR2() GameVersionRDR2 {
-    std.debug.assert(game == .RDR2);
-    return @enumFromInt(getGameVersion());
+/// Returns an error if the game is not RDR2.
+pub fn getGameVersionRDR2() (Error || GameVersionError)!GameVersionRDR2 {
+    try ensureInitialized();
+
+    if (state.game != .RDR2) {
+        return GameVersionError.NotRDR2;
+    }
+
+    return @enumFromInt(try getGameVersion());
 }
 
 test "ScriptHook" {
@@ -516,10 +574,16 @@ test "ScriptHook" {
     testing.refAllDeclsRecursive(@This());
 }
 
+/// Errors that can occur during path resolution.
+const PathError = error{
+    /// Path exceeds maximum supported length.
+    PathTooLong,
+};
+
 fn getModuleFileNameW(
     allocator: std.mem.Allocator,
     module: ?windows.HMODULE,
-) (std.mem.Allocator.Error || std.posix.UnexpectedError)![:0]u16 {
+) (std.mem.Allocator.Error || std.posix.UnexpectedError || PathError)![:0]u16 {
     const INITIAL_BUFFER_SIZE = windows.MAX_PATH;
     const MAX_ITERATIONS = 7; // 260 (MAX_PATH) * 2^7 = 33,280 characters
 
@@ -544,7 +608,8 @@ fn getModuleFileNameW(
     }
 
     // Max Windows path length is 32,767 characters, we should not reach here
-    std.debug.panic("Failed to get module file name after multiple attempts", .{});
+    allocator.free(buffer);
+    return PathError.PathTooLong;
 }
 
 extern "kernel32" fn GetLongPathNameW(
@@ -556,7 +621,7 @@ extern "kernel32" fn GetLongPathNameW(
 fn getLongPathNameW(
     allocator: std.mem.Allocator,
     path: [*:0]const u16,
-) (std.mem.Allocator.Error || std.posix.UnexpectedError)![:0]u16 {
+) (std.mem.Allocator.Error || std.posix.UnexpectedError || PathError)![:0]u16 {
     const INITIAL_BUFFER_SIZE = windows.MAX_PATH;
     const MAX_ITERATIONS = 7; // 260 (MAX_PATH) * 2^7 = 33,280 characters
 
@@ -584,13 +649,14 @@ fn getLongPathNameW(
     }
 
     // Max Windows path length is 32,767 characters, we should not reach here
-    std.debug.panic("Failed to get long path name after multiple attempts", .{});
+    allocator.free(buffer);
+    return PathError.PathTooLong;
 }
 
 fn getModulePathW(
     allocator: std.mem.Allocator,
     module: ?windows.HMODULE,
-) (std.mem.Allocator.Error || std.posix.UnexpectedError)![:0]const u16 {
+) (std.mem.Allocator.Error || std.posix.UnexpectedError || PathError)![:0]const u16 {
     const full_path_wtf16 = try getModuleFileNameW(
         allocator,
         module,
@@ -608,7 +674,7 @@ fn getModulePathW(
 fn getModulePathZ(
     allocator: std.mem.Allocator,
     module: ?windows.HMODULE,
-) (std.mem.Allocator.Error || std.posix.UnexpectedError)![:0]const u8 {
+) (std.mem.Allocator.Error || std.posix.UnexpectedError || PathError)![:0]const u8 {
     const full_path_wtf16 = try getModulePathW(
         allocator,
         module,
